@@ -19,12 +19,15 @@ fi
 build_menu() {
     OPTIONS=()
 
+    # ✅ Add Fix All option at top
+    OPTIONS+=("Fix_All" "Run all scripts" OFF)
+
     for script in "$SCRIPTS_DIR"/*.sh; do
         [ -f "$script" ] || continue
 
         NAME=$(basename "$script")
 
-        # Rulăm check în subshell izolat
+        # Run check in isolated subshell
         if bash -c "source \"$script\" 2>/dev/null && declare -f check >/dev/null && check"; then
             STATUS="[FIXED]"
         else
@@ -35,9 +38,24 @@ build_menu() {
     done
 }
 
+run_all() {
+    echo "Running ALL hardening scripts..."
+    for script in "$SCRIPTS_DIR"/*.sh; do
+        [ -f "$script" ] || continue
+        echo "Running $(basename "$script")..."
+        bash -c "source \"$script\" && declare -f apply >/dev/null && apply"
+    done
+}
+
 run_selected() {
 
     for choice in "${SELECTED[@]}"; do
+
+        if [[ "$choice" == "Fix_All" ]]; then
+            run_all
+            continue
+        fi
+
         SCRIPT_PATH="$SCRIPTS_DIR/$choice"
 
         if [[ -f "$SCRIPT_PATH" ]]; then
@@ -54,7 +72,7 @@ while true; do
     build_menu
 
     CHOICES=$(whiptail --title "CIS Hardening Control Panel" \
-        --checklist "Select scripts to run:" 20 70 10 \
+        --checklist "Select scripts to run:" 20 70 15 \
         "${OPTIONS[@]}" \
         3>&1 1>&2 2>&3)
 
@@ -63,7 +81,6 @@ while true; do
         exit 0
     fi
 
-    # Transformăm output în array sigur
     SELECTED=()
     for item in $CHOICES; do
         SELECTED+=("${item//\"/}")
