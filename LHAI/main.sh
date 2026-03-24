@@ -1,8 +1,14 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
-SCRIPTS_DIR="$(dirname "$0")/scripts"
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)/scripts"
+
+# Require root
+if [[ $EUID -ne 0 ]]; then
+    echo "Run as root."
+    exit 1
+fi
 
 # Install whiptail if missing
 if ! command -v whiptail &>/dev/null; then
@@ -10,25 +16,28 @@ if ! command -v whiptail &>/dev/null; then
     apt update && apt install -y whiptail
 fi
 
-# Require root
-if [ "$EUID" -ne 0 ]; then
-    echo "Run as root."
-    exit 1
-fi
+# Enable nullglob so *.sh doesn't expand literally
+shopt -s nullglob
 
 build_menu() {
+
     OPTIONS=()
 
-    # ✅ Add Fix All option at top
+    # Add Fix All option
     OPTIONS+=("Fix_All" "Run all scripts" OFF)
 
-    for script in "$SCRIPTS_DIR"/*.sh; do
-        [ -f "$script" ] || continue
+    mapfile -t SCRIPTS < <(ls -1 "$SCRIPTS_DIR"/*.sh 2>/dev/null | sort)
 
-        NAME=$(basename "$script")
+    if [[ ${#SCRIPTS[@]} -eq 0 ]]; then
+        whiptail --msgbox "No scripts found in $SCRIPTS_DIR" 10 60
+        exit 1
+    fi
 
-        # Run check in isolated subshell
-        if bash -c "source \"$script\" 2>/dev/null && declare -f check >/dev/null && check"; then
+    for script in "${SCRIPTS[@]}"; do
+        NAME="$(basename "$script")"
+
+        # Run check() safely in subshell
+        if bash -c "source \"$script\" 2>/dev/null; declare -f check >/dev/null && check" &>/dev/null; then
             STATUS="[FIXED]"
         else
             STATUS="[NOT FIXED]"
@@ -39,11 +48,15 @@ build_menu() {
 }
 
 run_all() {
+
     echo "Running ALL hardening scripts..."
-    for script in "$SCRIPTS_DIR"/*.sh; do
-        [ -f "$script" ] || continue
-        echo "Running $(basename "$script")..."
-        bash -c "source \"$script\" && declare -f apply >/dev/null && apply"
+    echo ""
+
+    for script in "${SCRIPTS[@]}"; do
+        NAME="$(basename "$script")"
+        echo "Running $NAME..."
+
+        bash -c "source \"$script\"; declare -f apply >/dev/null && apply" || true
     done
 }
 
@@ -60,7 +73,7 @@ run_selected() {
 
         if [[ -f "$SCRIPT_PATH" ]]; then
             echo "Running $choice..."
-            bash -c "source \"$SCRIPT_PATH\" && declare -f apply >/dev/null && apply"
+            bash -c "source \"$SCRIPT_PATH\"; declare -f apply >/dev/null && apply" || true
         else
             echo "Script $choice not found."
         fi
@@ -72,23 +85,22 @@ while true; do
     build_menu
 
     CHOICES=$(whiptail --title "CIS Hardening Control Panel" \
-        --checklist "Select scripts to run:" 20 70 15 \
+        --checklist "Select scripts to run:" 20 80 15 \
         "${OPTIONS[@]}" \
         3>&1 1>&2 2>&3)
 
-    if [ $? -ne 0 ]; then
+    # Cancel pressed
+    if [[ $? -ne 0 ]]; then
         clear
         exit 0
     fi
 
-    SELECTED=()
-    for item in $CHOICES; do
-        SELECTED+=("${item//\"/}")
-    done
+    # Safe parsing of whiptail output (handles spaces correctly)
+    mapfile -t SELECTED < <(echo "$CHOICES" | tr -d '"' )
 
     clear
     run_selected
 
     echo ""
-    read -p "Press Enter to refresh menu..."
+    read -rp "Press Enter to refresh menu..."
 done
